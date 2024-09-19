@@ -7,9 +7,13 @@ from dotenv import load_dotenv
 from discord.ext import commands, voice_recv
 from pydub import AudioSegment
 from pydub.silence import detect_nonsilent
+from datetime import datetime
 from threading import Timer
 
 load_dotenv()
+
+# Ensure the recordings directory exists
+os.makedirs("recordings", exist_ok=True)
 
 discord.opus._load_default()
 
@@ -22,7 +26,6 @@ class VoiceRecorder:
         self.last_spoken_time = time.time()
         self.silence_timer = None
         self.recording = AudioSegment.empty()
-        self.file_count = 0
 
     def add_packet(self, data):
         # Add the received packet data to the buffer
@@ -37,6 +40,8 @@ class VoiceRecorder:
         self.silence_timer.start()
 
     def save_recording(self):
+        
+
         # Save the audio data to an MP3 file
         if self.buffer.getvalue():
             self.buffer.seek(0)
@@ -46,8 +51,9 @@ class VoiceRecorder:
             nonsilent_ranges = detect_nonsilent(audio_segment, min_silence_len=1000, silence_thresh=-40)
 
             if nonsilent_ranges:
-                self.file_count += 1
-                output_filename = f"{self.user.id}_recording_{self.file_count}.mp3"
+                # Use the current timestamp for the filename
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                output_filename = f"recordings/{self.user.id}_recording_{timestamp}.mp3"
                 audio_segment.export(output_filename, format="mp3")
                 print(f"Saved recording as {output_filename}")
 
@@ -111,6 +117,23 @@ class NoteBot(commands.Cog):
                     print(f"Error connecting to the voice channel: {e}")
                 except Exception as e:
                     print(f"An unexpected error occurred: {e}")
+                    traceback.print_exc()
+
+        # Check if the bot should disconnect after any voice state update
+        voice_client = member.guild.voice_client
+        if voice_client is not None:
+            voice_channel = voice_client.channel
+
+            # Get a list of non-bot members currently in the voice channel
+            non_bot_members = [m for m in voice_channel.members if not m.bot]
+
+            if len(non_bot_members) == 0:
+                # No non-bot members left in the voice channel; disconnect the bot
+                try:
+                    await voice_client.disconnect()
+                    print(f"Bot disconnected from {voice_channel.name} because no users are left.")
+                except Exception as e:
+                    print(f"Error disconnecting the bot: {e}")
                     traceback.print_exc()
 
 @bot.event
