@@ -56,6 +56,7 @@ class VoiceRecorder:
                 output_filename = f"recordings/{self.user.id}_recording_{timestamp}.mp3"
                 audio_segment.export(output_filename, format="mp3")
                 print(f"Saved recording as {output_filename}")
+                print(f"{self.user.name}: {self.transcribe_recording(output_filename)}")
                 return output_filename
 
         # Reset buffer and audio data
@@ -82,7 +83,7 @@ class NoteBot(commands.Cog):
     async def test(self, ctx):
         def callback(user, data: voice_recv.VoiceData):
             if user.id not in self.recorders:
-                self.recorders[user.id] = VoiceRecorder(user)
+                self.recorders[user.id] = VoiceRecorder(user, self.model)
             recorder = self.recorders[user.id]
             recorder.add_packet(data.pcm)
 
@@ -124,7 +125,7 @@ class NoteBot(commands.Cog):
                             return
 
                         if user.id not in self.recorders:
-                            self.recorders[user.id] = VoiceRecorder(user)
+                            self.recorders[user.id] = VoiceRecorder(user, self.model)
 
                         recorder = self.recorders[user.id]
                         recorder.add_packet(data.pcm)
