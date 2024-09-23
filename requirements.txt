@@ -2,3 +2,4 @@ discord-ext-voice-recv==0.4.2a145
 discord.py==2.4.0
 pydub==0.25.1
 python-dotenv==1.0.1
+openai-whisper==20231117

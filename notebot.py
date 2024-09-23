@@ -1,4 +1,5 @@
 import discord
+import whisper
 import os
 import io
 import time
@@ -20,12 +21,13 @@ discord.opus._load_default()
 bot = commands.Bot(command_prefix=commands.when_mentioned, intents=discord.Intents.all())
 
 class VoiceRecorder:
-    def __init__(self, user):
+    def __init__(self, user, model):
         self.user = user
         self.buffer = io.BytesIO()
         self.last_spoken_time = time.time()
         self.silence_timer = None
         self.recording = AudioSegment.empty()
+        self.model = model
 
     def add_packet(self, data):
         # Add the received packet data to the buffer
@@ -40,8 +42,6 @@ class VoiceRecorder:
         self.silence_timer.start()
 
     def save_recording(self):
-        
-
         # Save the audio data to an MP3 file
         if self.buffer.getvalue():
             self.buffer.seek(0)
@@ -56,15 +56,27 @@ class VoiceRecorder:
                 output_filename = f"recordings/{self.user.id}_recording_{timestamp}.mp3"
                 audio_segment.export(output_filename, format="mp3")
                 print(f"Saved recording as {output_filename}")
+                return output_filename
 
         # Reset buffer and audio data
         self.buffer = io.BytesIO()
         self.recording = AudioSegment.empty()
 
+    def transcribe_recording(self, mp3_file_path):
+        # Transcribe the given MP3 file using OpenAI's Whisper
+        if os.path.exists(mp3_file_path):
+            result = self.model.transcribe(mp3_file_path)
+            return result['text']
+        else:
+            print(f"File {mp3_file_path} not found.")
+            return None
+
+
 class NoteBot(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.recorders = {}
+        self.model = whisper.load_model("large-v2")
 
     @commands.command()
     async def test(self, ctx):
@@ -106,10 +118,17 @@ class NoteBot(commands.Cog):
 
                     # Define the callback to handle received voice packets
                     def callback(user, data: voice_recv.VoiceData):
+                        # Check if user is None
+                        if user is None:
+                            print("User is None, skipping this packet.")
+                            return
+
                         if user.id not in self.recorders:
                             self.recorders[user.id] = VoiceRecorder(user)
+
                         recorder = self.recorders[user.id]
                         recorder.add_packet(data.pcm)
+
 
                     vc.listen(voice_recv.BasicSink(callback))
 
