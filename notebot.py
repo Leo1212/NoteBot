@@ -9,6 +9,7 @@ from discord.ext import commands, voice_recv
 from pydub import AudioSegment
 from pydub.silence import detect_nonsilent
 from datetime import datetime
+import numpy as np
 from threading import Timer
 
 load_dotenv()
@@ -42,35 +43,33 @@ class VoiceRecorder:
         self.silence_timer.start()
 
     def save_recording(self):
-        # Save the audio data to an MP3 file
+        # Save the audio data to a buffer and transcribe directly
         if self.buffer.getvalue():
             self.buffer.seek(0)
             audio_segment = AudioSegment.from_raw(self.buffer, sample_width=2, frame_rate=48000, channels=2)
 
-            # Detect nonsilent parts to avoid saving empty audio
+            # Detect nonsilent parts to avoid transcribing empty audio
             nonsilent_ranges = detect_nonsilent(audio_segment, min_silence_len=1000, silence_thresh=-40)
 
             if nonsilent_ranges:
-                # Use the current timestamp for the filename
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                output_filename = f"recordings/{self.user.id}_recording_{timestamp}.mp3"
-                audio_segment.export(output_filename, format="mp3")
-                print(f"Saved recording as {output_filename}")
-                print(f"{self.user.name}: {self.transcribe_recording(output_filename)}")
-                return output_filename
+                # Transcribe directly from audio data without saving to a file
+                transcription = self.transcribe_recording(audio_segment)
+                print(f"{self.user.name}: {transcription}")
+                return transcription
 
         # Reset buffer and audio data
         self.buffer = io.BytesIO()
         self.recording = AudioSegment.empty()
 
-    def transcribe_recording(self, mp3_file_path):
-        # Transcribe the given MP3 file using OpenAI's Whisper
-        if os.path.exists(mp3_file_path):
-            result = self.model.transcribe(mp3_file_path)
-            return result['text']
-        else:
-            print(f"File {mp3_file_path} not found.")
-            return None
+    def transcribe_recording(self, audio_segment):
+        # Convert the audio segment to a NumPy array
+        samples = np.array(audio_segment.get_array_of_samples())
+        # Convert the samples to float32 for Whisper model
+        audio_array = samples.astype(np.float32) / 32768.0  # normalize to [-1, 1]
+
+        # Use the whisper model to transcribe
+        result = self.model.transcribe(audio_array)
+        return result['text']
 
 
 class NoteBot(commands.Cog):
