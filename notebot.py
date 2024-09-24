@@ -1,6 +1,6 @@
 import discord
-import whisper
 import os
+import torch
 import io
 import time
 import traceback
@@ -10,6 +10,7 @@ from pydub import AudioSegment
 from pydub.silence import detect_nonsilent
 from datetime import datetime
 import numpy as np
+from transformers import pipeline
 from threading import Timer
 
 load_dotenv()
@@ -22,13 +23,13 @@ discord.opus._load_default()
 bot = commands.Bot(command_prefix=commands.when_mentioned, intents=discord.Intents.all())
 
 class VoiceRecorder:
-    def __init__(self, user, model):
+    def __init__(self, user, model_pipeline):
         self.user = user
         self.buffer = io.BytesIO()
         self.last_spoken_time = time.time()
         self.silence_timer = None
         self.recording = AudioSegment.empty()
-        self.model = model
+        self.model_pipeline = model_pipeline  # Hugging Face pipeline
 
     def add_packet(self, data):
         # Add the received packet data to the buffer
@@ -67,22 +68,55 @@ class VoiceRecorder:
         # Convert the samples to float32 for Whisper model
         audio_array = samples.astype(np.float32) / 32768.0  # normalize to [-1, 1]
 
-        # Use the whisper model to transcribe
-        result = self.model.transcribe(audio_array)
-        return result['text']
+        # Use Hugging Face pipeline to transcribe
+        transcription = self.model_pipeline(audio_array, return_timestamps=False)
+        return transcription['text']
 
 
 class NoteBot(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.recorders = {}
-        self.model = whisper.load_model("large-v2")
+        device = 0 if torch.cuda.is_available() else -1
+        self.whisper_pipeline = pipeline(model="openai/whisper-large-v3", task="automatic-speech-recognition", device=device)
+
+
+    async def connect_to_existing_calls(self):
+        for guild in self.bot.guilds:
+            for member in guild.members:
+                # Check if the member is in a voice channel and is not a bot
+                if member.voice is not None and not member.bot:
+                    voice_channel = member.voice.channel
+                    if guild.voice_client is None:
+                        try:
+                            # Connect to the user's voice channel if not already connected
+                            vc = await voice_channel.connect(cls=voice_recv.VoiceRecvClient)
+                            print(f"Bot connected to {voice_channel.name} (user already in channel)")
+
+                            # Define the callback to handle received voice packets
+                            def callback(user, data: voice_recv.VoiceData):
+                                if user is None:
+                                    print("User is None, skipping this packet.")
+                                    return
+
+                                if user.id not in self.recorders:
+                                    self.recorders[user.id] = VoiceRecorder(user, self.whisper_pipeline)
+
+                                recorder = self.recorders[user.id]
+                                recorder.add_packet(data.pcm)
+
+                            vc.listen(voice_recv.BasicSink(callback))
+                        except discord.ClientException as e:
+                            print(f"Error connecting to the voice channel: {e}")
+                        except Exception as e:
+                            print(f"An unexpected error occurred: {e}")
+                            traceback.print_exc()
 
     @commands.command()
     async def test(self, ctx):
         def callback(user, data: voice_recv.VoiceData):
             if user.id not in self.recorders:
-                self.recorders[user.id] = VoiceRecorder(user, self.model)
+                self.recorders[user.id] = VoiceRecorder(user, self.whisper_pipeline)
             recorder = self.recorders[user.id]
             recorder.add_packet(data.pcm)
 
@@ -124,7 +158,7 @@ class NoteBot(commands.Cog):
                             return
 
                         if user.id not in self.recorders:
-                            self.recorders[user.id] = VoiceRecorder(user, self.model)
+                            self.recorders[user.id] = VoiceRecorder(user, self.whisper_pipeline)
 
                         recorder = self.recorders[user.id]
                         recorder.add_packet(data.pcm)
@@ -159,6 +193,8 @@ class NoteBot(commands.Cog):
 async def on_ready():
     print('Logged in as {0.id}/{0}'.format(bot.user))
     print('------')
-    await bot.add_cog(NoteBot(bot))
+    note_bot = NoteBot(bot)
+    await bot.add_cog(note_bot)
+    await note_bot.connect_to_existing_calls()
 
 bot.run(os.getenv('DISCORD_BOT_TOKEN'))
