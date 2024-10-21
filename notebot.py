@@ -9,27 +9,26 @@ from discord.ext import commands, voice_recv
 from pydub import AudioSegment
 from pydub.silence import detect_nonsilent
 from datetime import datetime
+import json
 import numpy as np
 from transformers import pipeline
 from threading import Timer
 
 load_dotenv()
 
-# Ensure the recordings directory exists
-os.makedirs("recordings", exist_ok=True)
-
 discord.opus._load_default()
 
 bot = commands.Bot(command_prefix=commands.when_mentioned, intents=discord.Intents.all())
 
 class VoiceRecorder:
-    def __init__(self, user, model_pipeline):
+    def __init__(self, user, model_pipeline, settings):
         self.user = user
         self.buffer = io.BytesIO()
         self.last_spoken_time = time.time()
         self.silence_timer = None
         self.recording = AudioSegment.empty()
         self.model_pipeline = model_pipeline  # Hugging Face pipeline
+        self.settings = settings  # Load settings from NoteBot
 
     def add_packet(self, data):
         # Add the received packet data to the buffer
@@ -56,6 +55,11 @@ class VoiceRecorder:
                 # Transcribe directly from audio data without saving to a file
                 transcription = self.transcribe_recording(audio_segment)
                 print(f"{self.user.name}: {transcription}")
+
+                # Check if settings allow saving audio
+                if self.settings.get('saveAudio'):
+                    self.save_audio_file(audio_segment)
+                
                 return transcription
 
         # Reset buffer and audio data
@@ -72,11 +76,30 @@ class VoiceRecorder:
         transcription = self.model_pipeline(audio_array, return_timestamps=False)
         return transcription['text']
 
+    def save_audio_file(self, audio_segment):
+        # Get the path from settings
+        audio_path = self.settings.get('audioPath')
+
+        # Generate a timestamped filename for uniqueness
+        filename = f"{self.user.name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp3"
+        filepath = os.path.join(audio_path, filename)
+
+        # Export the audio to an MP3 file
+        audio_segment.export(filepath, format="mp3")
+        print(f"Saved audio to {filepath}")
+
 
 class NoteBot(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.recorders = {}
+        with open('./settings.json', 'r') as file:
+            self.settings = json.load(file)
+
+        if self.settings.get('saveAudio') and self.settings.get('audioPath') is not None:
+            # Ensure the recordings directory exists
+            os.makedirs(self.settings.get('audioPath'), exist_ok=True)
+        
         device = 0 if torch.cuda.is_available() else -1
         self.whisper_pipeline = pipeline(model="openai/whisper-large-v3", task="automatic-speech-recognition", device=device)
 
@@ -100,7 +123,7 @@ class NoteBot(commands.Cog):
                                     return
 
                                 if user.id not in self.recorders:
-                                    self.recorders[user.id] = VoiceRecorder(user, self.whisper_pipeline)
+                                    self.recorders[user.id] = VoiceRecorder(user, self.whisper_pipeline, self.settings)
 
                                 recorder = self.recorders[user.id]
                                 recorder.add_packet(data.pcm)

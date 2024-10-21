@@ -1,0 +1,5 @@
+{
+    "saveAudio": true,
+    "audioPath": "./recordings",
+    "minimumMeetingParticipants": 2
+}
