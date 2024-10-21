@@ -13,6 +13,7 @@ import json
 import numpy as np
 from transformers import pipeline
 from threading import Timer
+from mongo_handler import MongoDBHandler  # Import your MongoDB handler
 
 load_dotenv()
 
@@ -93,6 +94,8 @@ class NoteBot(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.recorders = {}
+        self.db_handler = MongoDBHandler()  # Instantiate the MongoDB handler
+
         with open('./settings.json', 'r') as file:
             self.settings = json.load(file)
 
@@ -103,6 +106,16 @@ class NoteBot(commands.Cog):
         device = 0 if torch.cuda.is_available() else -1
         self.whisper_pipeline = pipeline(model="openai/whisper-large-v3", task="automatic-speech-recognition", device=device)
 
+    def create_meeting_entry(self, meeting_id, attendees, start_date, end_date):
+        """Creates a meeting entry in the MongoDB database."""
+        data = {
+            "meeting_id": meeting_id,
+            "attendees": attendees,
+            "start_date": start_date,
+            "end_date": end_date
+        }
+        self.db_handler.create_entry("meetings", data)
+        print(f"Meeting entry created: {meeting_id}")
 
     async def connect_to_existing_calls(self):
         for guild in self.bot.guilds:
@@ -157,6 +170,17 @@ class NoteBot(commands.Cog):
         ctx.voice_client.stop()
         await ctx.bot.close()
 
+    @commands.command()
+    async def create_meeting(self, ctx, meeting_id: str):
+        """Command to manually create a meeting entry."""
+        start_date = datetime.now()
+        end_date = None  # Update later when the meeting ends
+        attendees = [member.name for member in ctx.author.voice.channel.members if not member.bot]
+
+        # Create the meeting entry in the database
+        self.create_meeting_entry(meeting_id, attendees, start_date, end_date)
+        await ctx.send(f"Meeting '{meeting_id}' created with attendees: {', '.join(attendees)}")
+
     @commands.Cog.listener()
     async def on_voice_state_update(self, member, before, after):
         print(f"Voice state update detected for {member.name}")
@@ -185,7 +209,6 @@ class NoteBot(commands.Cog):
 
                         recorder = self.recorders[user.id]
                         recorder.add_packet(data.pcm)
-
 
                     vc.listen(voice_recv.BasicSink(callback))
 
