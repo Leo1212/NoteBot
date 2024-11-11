@@ -19,7 +19,10 @@ load_dotenv()
 
 discord.opus._load_default()
 
-bot = commands.Bot(command_prefix=commands.when_mentioned, intents=discord.Intents.all())
+bot = commands.Bot(
+    command_prefix=commands.when_mentioned, intents=discord.Intents.all()
+)
+
 
 class VoiceRecorder:
     def __init__(self, user, model_pipeline, settings):
@@ -47,10 +50,14 @@ class VoiceRecorder:
         # Save the audio data to a buffer and transcribe directly
         if self.buffer.getvalue():
             self.buffer.seek(0)
-            audio_segment = AudioSegment.from_raw(self.buffer, sample_width=2, frame_rate=48000, channels=2)
+            audio_segment = AudioSegment.from_raw(
+                self.buffer, sample_width=2, frame_rate=48000, channels=2
+            )
 
             # Detect nonsilent parts to avoid transcribing empty audio
-            nonsilent_ranges = detect_nonsilent(audio_segment, min_silence_len=1000, silence_thresh=-40)
+            nonsilent_ranges = detect_nonsilent(
+                audio_segment, min_silence_len=1000, silence_thresh=-40
+            )
 
             if nonsilent_ranges:
                 # Transcribe directly from audio data without saving to a file
@@ -58,9 +65,9 @@ class VoiceRecorder:
                 print(f"{self.user.name}: {transcription}")
 
                 # Check if settings allow saving audio
-                if self.settings.get('saveAudio'):
+                if self.settings.get("saveAudio"):
                     self.save_audio_file(audio_segment)
-                
+
                 return transcription
 
         # Reset buffer and audio data
@@ -74,12 +81,19 @@ class VoiceRecorder:
         audio_array = samples.astype(np.float32) / 32768.0  # normalize to [-1, 1]
 
         # Use Hugging Face pipeline to transcribe
-        transcription = self.model_pipeline(audio_array, return_timestamps=False)
-        return transcription['text']
+        transcription = self.model_pipeline(
+            audio_array,
+            generate_kwargs={
+                "task": "transcribe",
+                # "language": "english",
+            },
+            return_timestamps=False,
+        )
+        return transcription["text"]
 
     def save_audio_file(self, audio_segment):
         # Get the path from settings
-        audio_path = self.settings.get('audioPath')
+        audio_path = self.settings.get("audioPath")
 
         # Generate a timestamped filename for uniqueness
         filename = f"{self.user.name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp3"
@@ -96,15 +110,22 @@ class NoteBot(commands.Cog):
         self.recorders = {}
         self.db_handler = MongoDBHandler()  # Instantiate the MongoDB handler
 
-        with open('./settings.json', 'r') as file:
+        with open("./settings.json", "r") as file:
             self.settings = json.load(file)
 
-        if self.settings.get('saveAudio') and self.settings.get('audioPath') is not None:
+        if (
+            self.settings.get("saveAudio")
+            and self.settings.get("audioPath") is not None
+        ):
             # Ensure the recordings directory exists
-            os.makedirs(self.settings.get('audioPath'), exist_ok=True)
-        
+            os.makedirs(self.settings.get("audioPath"), exist_ok=True)
+
         device = 0 if torch.cuda.is_available() else -1
-        self.whisper_pipeline = pipeline(model="openai/whisper-large-v3", task="automatic-speech-recognition", device=device)
+        self.whisper_pipeline = pipeline(
+            model="openai/whisper-large-v3",
+            task="automatic-speech-recognition",
+            device=device,
+        )
 
     def create_meeting_entry(self, meeting_id, attendees, start_date, end_date):
         """Creates a meeting entry in the MongoDB database."""
@@ -112,7 +133,7 @@ class NoteBot(commands.Cog):
             "meeting_id": meeting_id,
             "attendees": attendees,
             "start_date": start_date,
-            "end_date": end_date
+            "end_date": end_date,
         }
         self.db_handler.create_entry("meetings", data)
         print(f"Meeting entry created: {meeting_id}")
@@ -126,8 +147,12 @@ class NoteBot(commands.Cog):
                     if guild.voice_client is None:
                         try:
                             # Connect to the user's voice channel if not already connected
-                            vc = await voice_channel.connect(cls=voice_recv.VoiceRecvClient)
-                            print(f"Bot connected to {voice_channel.name} (user already in channel)")
+                            vc = await voice_channel.connect(
+                                cls=voice_recv.VoiceRecvClient
+                            )
+                            print(
+                                f"Bot connected to {voice_channel.name} (user already in channel)"
+                            )
 
                             # Define the callback to handle received voice packets
                             def callback(user, data: voice_recv.VoiceData):
@@ -136,7 +161,9 @@ class NoteBot(commands.Cog):
                                     return
 
                                 if user.id not in self.recorders:
-                                    self.recorders[user.id] = VoiceRecorder(user, self.whisper_pipeline, self.settings)
+                                    self.recorders[user.id] = VoiceRecorder(
+                                        user, self.whisper_pipeline, self.settings
+                                    )
 
                                 recorder = self.recorders[user.id]
                                 recorder.add_packet(data.pcm)
@@ -175,11 +202,15 @@ class NoteBot(commands.Cog):
         """Command to manually create a meeting entry."""
         start_date = datetime.now()
         end_date = None  # Update later when the meeting ends
-        attendees = [member.name for member in ctx.author.voice.channel.members if not member.bot]
+        attendees = [
+            member.name for member in ctx.author.voice.channel.members if not member.bot
+        ]
 
         # Create the meeting entry in the database
         self.create_meeting_entry(meeting_id, attendees, start_date, end_date)
-        await ctx.send(f"Meeting '{meeting_id}' created with attendees: {', '.join(attendees)}")
+        await ctx.send(
+            f"Meeting '{meeting_id}' created with attendees: {', '.join(attendees)}"
+        )
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member, before, after):
@@ -205,7 +236,9 @@ class NoteBot(commands.Cog):
                             return
 
                         if user.id not in self.recorders:
-                            self.recorders[user.id] = VoiceRecorder(user, self.whisper_pipeline)
+                            self.recorders[user.id] = VoiceRecorder(
+                                user, self.whisper_pipeline
+                            )
 
                         recorder = self.recorders[user.id]
                         recorder.add_packet(data.pcm)
@@ -230,17 +263,21 @@ class NoteBot(commands.Cog):
                 # No non-bot members left in the voice channel; disconnect the bot
                 try:
                     await voice_client.disconnect()
-                    print(f"Bot disconnected from {voice_channel.name} because no users are left.")
+                    print(
+                        f"Bot disconnected from {voice_channel.name} because no users are left."
+                    )
                 except Exception as e:
                     print(f"Error disconnecting the bot: {e}")
                     traceback.print_exc()
 
+
 @bot.event
 async def on_ready():
-    print('Logged in as {0.id}/{0}'.format(bot.user))
-    print('------')
+    print("Logged in as {0.id}/{0}".format(bot.user))
+    print("------")
     note_bot = NoteBot(bot)
     await bot.add_cog(note_bot)
     await note_bot.connect_to_existing_calls()
 
-bot.run(os.getenv('DISCORD_BOT_TOKEN'))
+
+bot.run(os.getenv("DISCORD_BOT_TOKEN"))
