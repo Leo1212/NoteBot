@@ -13,7 +13,7 @@ import json
 import numpy as np
 from transformers import pipeline
 from threading import Timer
-from mongo_handler import MongoDBHandler  # Import your MongoDB handler
+from mongo_handler import MongoDBHandler 
 
 load_dotenv()
 
@@ -108,7 +108,8 @@ class NoteBot(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.recorders = {}
-        self.db_handler = MongoDBHandler()  # Instantiate the MongoDB handler
+        
+        self.db_handler = MongoDBHandler(os.getenv('MONGO_URI'), os.getenv('MONGO_DB_NAME'))  # Instantiate the MongoDB handler
 
         with open("./settings.json", "r") as file:
             self.settings = json.load(file)
@@ -179,7 +180,7 @@ class NoteBot(commands.Cog):
     async def test(self, ctx):
         def callback(user, data: voice_recv.VoiceData):
             if user.id not in self.recorders:
-                self.recorders[user.id] = VoiceRecorder(user, self.whisper_pipeline)
+                self.recorders[user.id] = VoiceRecorder(user, self.whisper_pipeline, self.settings)
             recorder = self.recorders[user.id]
             recorder.add_packet(data.pcm)
 
@@ -222,6 +223,18 @@ class NoteBot(commands.Cog):
         if before.channel is None and after.channel is not None:
             voice_channel = after.channel
 
+            # Create a unique meeting ID (you can customize this logic)
+            meeting_id = f"meeting_{int(time.time())}"
+
+            # Get a list of non-bot members in the channel
+            attendees = [m.name for m in voice_channel.members if not m.bot]
+
+            # Create the meeting entry in the database
+            start_date = datetime.now()
+            end_date = None  # Set end date when the meeting ends
+            self.create_meeting_entry(meeting_id, attendees, start_date, end_date)
+            print(f"Meeting '{meeting_id}' created for channel '{voice_channel.name}'")
+
             # Check if the bot is already connected to a voice channel
             if member.guild.voice_client is None:
                 try:
@@ -230,14 +243,13 @@ class NoteBot(commands.Cog):
 
                     # Define the callback to handle received voice packets
                     def callback(user, data: voice_recv.VoiceData):
-                        # Check if user is None
                         if user is None:
                             print("User is None, skipping this packet.")
                             return
 
                         if user.id not in self.recorders:
                             self.recorders[user.id] = VoiceRecorder(
-                                user, self.whisper_pipeline
+                                user, self.whisper_pipeline, self.settings
                             )
 
                         recorder = self.recorders[user.id]
@@ -262,6 +274,13 @@ class NoteBot(commands.Cog):
             if len(non_bot_members) == 0:
                 # No non-bot members left in the voice channel; disconnect the bot
                 try:
+                    # Update meeting's end date before disconnecting
+                    end_date = datetime.now()
+                    meeting_filter = {"attendees": {"$in": [member.name]}, "end_date": None}
+                    update_data = {"$set": {"end_date": end_date}}
+                    self.db_handler.update_entry("meetings", meeting_filter, update_data)
+                    print(f"Updated meeting end date for '{voice_channel.name}'")
+
                     await voice_client.disconnect()
                     print(
                         f"Bot disconnected from {voice_channel.name} because no users are left."
@@ -269,6 +288,8 @@ class NoteBot(commands.Cog):
                 except Exception as e:
                     print(f"Error disconnecting the bot: {e}")
                     traceback.print_exc()
+
+
 
 
 @bot.event

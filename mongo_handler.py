@@ -1,19 +1,22 @@
-import os
-from pymongo import MongoClient
-from dotenv import load_dotenv
 
-load_dotenv()
+from pymongo import MongoClient
 
 class MongoDBHandler:
-    def __init__(self):
+    def __init__(self, mongo_uri, database_name):
         # Load MongoDB connection settings from environment variables
-        self.mongo_uri = os.getenv('MONGO_URI')
-        self.database_name = os.getenv('MONGO_DB_NAME')
+        self.mongo_uri = mongo_uri
+        self.database_name = database_name
         
         # Connect to MongoDB
         self.client = MongoClient(self.mongo_uri)
         self.db = self.client[self.database_name]
-        print(f"Connected to MongoDB database: {self.database_name}")
+        # client = MongoClient(DB_MACHINE, DB_PORT)
+        
+        self.ping = self.client.admin.command("ping")
+        if self.ping.get("ok") == 1.0:
+            print(f"Connected to MongoDB database: {self.database_name}")
+        else:
+            raise Exception("Authentication failed")
 
     def create_entry(self, collection_name, data):
         """Inserts a new entry into the specified collection."""
