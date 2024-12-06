@@ -17,6 +17,22 @@ class MongoDBHandler:
             print(f"Connected to MongoDB database: {self.database_name}")
         else:
             raise Exception("Authentication failed")
+        
+    def sanitize_data(self, data):
+        """Recursively removes or renames keys starting with '$'."""
+        if isinstance(data, dict):
+            sanitized = {}
+            for key, value in data.items():
+                if key.startswith('$'):
+                    sanitized[f"_{key[1:]}"] = self.sanitize_data(value)  # Rename key
+                else:
+                    sanitized[key] = self.sanitize_data(value)
+            return sanitized
+        elif isinstance(data, list):
+            return [self.sanitize_data(item) for item in data]
+        else:
+            return data
+
 
     def create_entry(self, collection_name, data):
         """Inserts a new entry into the specified collection."""
@@ -37,6 +53,7 @@ class MongoDBHandler:
 
     def update_entry(self, collection_name, query, update_data):
         """Updates an existing entry based on the provided query."""
+        update_data = self.sanitize_data(update_data)  # Sanitize the data
         collection = self.db[collection_name]
         result = collection.update_one(query, {'$set': update_data})
         if result.matched_count:
@@ -44,6 +61,8 @@ class MongoDBHandler:
         else:
             print("No matching entry found to update.")
         return result.modified_count
+
+
 
     def delete_entry(self, collection_name, query):
         """Deletes an entry based on the provided query."""

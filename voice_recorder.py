@@ -1,14 +1,18 @@
 import io
+import os
 from threading import Timer
 import time
 from pydub import AudioSegment
 from pydub.silence import detect_nonsilent
 import numpy as np
+from mongo_handler import MongoDBHandler
 from datetime import datetime
 
+
 class VoiceRecorder:
-    def __init__(self, user, model_pipeline, settings):
+    def __init__(self, user, meeting_id, model_pipeline, settings):
         self.user = user
+        self.meeting_id = meeting_id
         self.buffer = io.BytesIO()
         self.last_spoken_time = time.time()
         self.silence_timer = None
@@ -57,18 +61,27 @@ class VoiceRecorder:
         self.recording = AudioSegment.empty()
 
     def transcribe_recording(self, audio_segment):
+        # Convert the audio to mono
+        audio_segment = audio_segment.set_channels(1)
+
+        # Resample to 16 kHz
+        audio_segment = audio_segment.set_frame_rate(16000)
+
         # Convert the audio segment to a NumPy array
         samples = np.array(audio_segment.get_array_of_samples())
-        # Convert the samples to float32 for Whisper model
-        audio_array = samples.astype(np.float32) / 32768.0  # normalize to [-1, 1]
+
+        # Normalize to float32 in the range [-1, 1]
+        audio_array = samples.astype(np.float32) / 32768.0
 
         # Use Hugging Face pipeline to transcribe
         transcription = self.model_pipeline(
             audio_array,
             generate_kwargs={
                 "task": "transcribe",
-                # "language": "english",
+                # "language": "german",
             },
+            # chunk_length_s=30,
+            # batch_size=8,
             return_timestamps=False,
         )
         return transcription["text"]

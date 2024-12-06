@@ -2,5 +2,6 @@
     "saveAudio": true,
     "audioPath": "./recordings",
     "minimumMeetingParticipants": 2,
-    "modelName": "openai/whisper-large-v3"
+    "model_id": "openai/whisper-large-v3",
+    "device": "auto"
 }
