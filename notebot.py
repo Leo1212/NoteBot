@@ -41,7 +41,7 @@ class NoteBot(commands.Cog):
 
         device = 0 if torch.cuda.is_available() else -1
         self.whisper_pipeline = pipeline(
-            model="openai/whisper-large-v3",
+            model=self.settings.get("modelName"),
             task="automatic-speech-recognition",
             device=device,
         )
