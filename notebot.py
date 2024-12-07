@@ -48,6 +48,7 @@ class NoteBot(commands.Cog):
             "attendees": attendees,
             "start_date": start_date,
             "end_date": end_date,
+            "transcriptions": []  
         }
         self.db_handler.create_entry("meetings", data)
         self.meeting_id = meeting_id
@@ -77,7 +78,7 @@ class NoteBot(commands.Cog):
 
                                 if user.id not in self.recorders:
                                     self.recorders[user.id] = VoiceRecorder(
-                                        user, self.meeting_id, self.whisper_pipeline, self.settings
+                                        user, self.meeting_id, self.whisper_pipeline, self.settings, self.db_handler
                                     )
 
                                 recorder = self.recorders[user.id]
@@ -111,9 +112,10 @@ class NoteBot(commands.Cog):
                         "meetings", {"end_date": None}
                     )
                     if active_meeting:
-                        print(f"Reconnected to active meeting: {active_meeting['meeting_id']}")
+                        self.meeting_id = active_meeting["meeting_id"]  # Set meeting_id for active meeting
+                        print(f"Reconnected to active meeting: {self.meeting_id}")
                     else:
-                        # Create a new meeting if none is active
+                        # Create a new meeting
                         meeting_id = f"meeting_{int(time.time())}"
                         attendees = [m.name for m in voice_channel.members if not m.bot]
                         start_date = datetime.now()
@@ -133,7 +135,7 @@ class NoteBot(commands.Cog):
 
                         if user.id not in self.recorders:
                             self.recorders[user.id] = VoiceRecorder(
-                                user, self.meeting_id, self.whisper_pipeline, self.settings
+                                user, self.meeting_id, self.whisper_pipeline, self.settings, self.db_handler
                             )
 
                         recorder = self.recorders[user.id]
@@ -164,14 +166,15 @@ class NoteBot(commands.Cog):
                         active_meetings, key=lambda m: m["start_date"], default=None
                     )
                     if latest_meeting:
-                        update_data = {"end_date": end_date}
                         self.db_handler.update_entry(
-                            "meetings", {"meeting_id": latest_meeting["meeting_id"]}, update_data
+                            "meetings",
+                            {"meeting_id": latest_meeting['meeting_id']},
+                            {"$set": {"end_date": end_date}}
                         )
                         print(f"Updated meeting end date for '{latest_meeting['meeting_id']}'")
-                        self.meeting_id = None
 
                     await voice_client.disconnect()
+                    self.meeting_id = None  
                     print(
                         f"Bot disconnected from {voice_channel.name} because no users are left."
                     )

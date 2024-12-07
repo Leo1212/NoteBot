@@ -19,12 +19,16 @@ class MongoDBHandler:
             raise Exception("Authentication failed")
         
     def sanitize_data(self, data):
-        """Recursively removes or renames keys starting with '$'."""
+        """Recursively removes or renames keys starting with '$' unless they are valid MongoDB operators."""
         if isinstance(data, dict):
             sanitized = {}
             for key, value in data.items():
-                if key.startswith('$'):
-                    sanitized[f"_{key[1:]}"] = self.sanitize_data(value)  # Rename key
+                if key.startswith('$') and key in ['$set', '$push', '$inc', '$pull']:
+                    # Allow MongoDB operators
+                    sanitized[key] = self.sanitize_data(value)
+                elif key.startswith('$'):
+                    # Rename invalid keys
+                    sanitized[f"_{key[1:]}"] = self.sanitize_data(value)
                 else:
                     sanitized[key] = self.sanitize_data(value)
             return sanitized
@@ -32,6 +36,7 @@ class MongoDBHandler:
             return [self.sanitize_data(item) for item in data]
         else:
             return data
+
 
 
     def create_entry(self, collection_name, data):
@@ -53,16 +58,19 @@ class MongoDBHandler:
 
     def update_entry(self, collection_name, query, update_data):
         """Updates an existing entry based on the provided query."""
-        update_data = self.sanitize_data(update_data)  # Sanitize the data
+        # Comment out sanitization to verify raw data:
+        # update_data = self.sanitize_data(update_data)  
+        
+        print(f"Update Query: {query}")
+        print(f"Update Data: {update_data}")
+        
         collection = self.db[collection_name]
-        result = collection.update_one(query, {'$set': update_data})
+        result = collection.update_one(query, update_data)
         if result.matched_count:
             print(f"Successfully updated {result.modified_count} entry/entries.")
         else:
             print("No matching entry found to update.")
         return result.modified_count
-
-
 
     def delete_entry(self, collection_name, query):
         """Deletes an entry based on the provided query."""
