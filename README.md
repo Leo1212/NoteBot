@@ -1,5 +1,12 @@
 # NoteBot
-An AI powered note taker for discord calls
+Your AI-Powered Meeting Assistant for Discord  
+
+Welcome to NoteBot, the ultimate AI-driven note-taker for your Discord voice calls.  
+Designed to streamline your conversations, NoteBot listens, transcribes, translates,   
+and summarizes discussions in real time—perfect for productive meetings, gaming sessions, or casual catch-ups.
+
+With its seamless Discord integration and advanced AI capabilities, NoteBot takes the hassle out of managing notes and lets you focus on what truly matters: the conversation.  
+Whether you're working with English, Swiss German, or other supported languages, NoteBot adapts to your needs and even allows you to plug in your own transcription and summarization models.
 
 ## Getting started
 1. run `python3 -m venv bot-env` or `conda create -n notebot python=3.11.5`
