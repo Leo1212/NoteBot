@@ -67,6 +67,7 @@ class MeetingReader:
                 "Generate the response in the language that was spoken in the meeting. So if the transcripts are in german, sumamrize in germand and create a german title. If the languag is englisch, do everything in english and so on. \n\n"
                 "1. Invent a brief, fitting meeting title that captures the overall theme or purpose of the meeting.\n"
                 "2. Summarize the key points, decisions, and action items from the transcripts.\n\n"
+                "3. Create a to-do list of action items that need to be completed after the meeting.\n\n"
                 "The first line of your response should be the newly created meeting title.\n\n"
                 f"Transcripts:\n{meeting_transcripts}"
             )

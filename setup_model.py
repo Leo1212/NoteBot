@@ -27,6 +27,7 @@ def setup_whisper_model(model_id, device_setting, cache_dir="cache"):
     pipe = pipeline(
         "automatic-speech-recognition",
         model=model,
+        chunk_length_s=30,
         tokenizer=processor.tokenizer,
         feature_extractor=processor.feature_extractor,
         torch_dtype=torch_dtype,

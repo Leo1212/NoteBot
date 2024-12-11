@@ -20,7 +20,7 @@ In the `settings.json` file you can configure your bot.
     "saveAudio": true, // should we save the audio locally? true/false
     "audioPath": "./recordings", // path where the recordings should be saved (only if saveAudio is true)
     "minimumMeetingParticipants": 2, // when do we start detecting a meeting? min amount of people in the call
-    "model_id": "openai/whisper-large-v3", // base model to transcribe & translate
+    "model_id": "openai/whisper-large-v3", // base model to transcribe & translate (examples: notebotIE/whisper-large-v2-swiss-german or openai/whisper-large-v3)
     "summarizer_model_id": "gpt-3.5-turbo", // model to summarize the meeting. If gpt, OPENAI_API_KEY key must be set. But you can also use the model: facebook/bart-large-cnn
     "device": "auto", // should the model run on 'cpu', 'cuda' or 'auto' (we detect if a gpu us available)
     "useOriginalLanguage": true // should the summary be in english or the original spoken language?

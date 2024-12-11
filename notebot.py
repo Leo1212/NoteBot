@@ -28,7 +28,7 @@ class NoteBot(commands.Cog):
 
         self.db_handler = MongoDBHandler(
             os.getenv("MONGO_URI"), os.getenv("MONGO_DB_NAME")
-        )  # Instantiate the MongoDB handler
+        )
 
         with open("./settings.json", "r") as file:
             self.settings = json.load(file)
@@ -43,6 +43,7 @@ class NoteBot(commands.Cog):
             os.makedirs(self.settings.get("audioPath"), exist_ok=True)
 
         self.whisper_pipeline = setup_whisper_model(self.settings.get("model_id"), self.settings.get("device"))
+        self.minimumMeetingParticipants = self.settings.get("minimumMeetingParticipants", 2)
 
     def create_meeting_entry(self, meeting_id, attendees, start_date, end_date):
         """Creates a meeting entry in the MongoDB database."""
@@ -82,7 +83,6 @@ class NoteBot(commands.Cog):
                                     self.recorders[user.id] = VoiceRecorder(
                                         user, self.meeting_id, self.whisper_pipeline, self.settings, self.db_handler
                                     )
-
                                 recorder = self.recorders[user.id]
                                 recorder.add_packet(data.pcm)
 
@@ -105,6 +105,9 @@ class NoteBot(commands.Cog):
         if before.channel is None and after.channel is not None:
             voice_channel = after.channel
 
+            # Count non-bot members currently in the channel
+            non_bot_members = [m for m in voice_channel.members if not m.bot]
+
             # Check for active meeting
             active_meeting = self.db_handler.read_entry("meetings", {"end_date": None})
             if active_meeting:
@@ -114,7 +117,7 @@ class NoteBot(commands.Cog):
 
                 # Check if new attendee is already in the meeting's attendee list
                 attendees = active_meeting.get("attendees", [])
-                if not any(a["id"] == member.id for a in attendees) and not member.bot:
+                if not any(a["id"] == member.id for a in attendees):
                     # Add the new user to attendees
                     attendees.append({"id": member.id, "name": member.name})
                     self.db_handler.update_entry(
@@ -146,37 +149,42 @@ class NoteBot(commands.Cog):
                         print(f"Error handling voice channel join: {e}")
                         traceback.print_exc()
             else:
-                # No active meeting, create a new one
-                try:
-                    meeting_id = f"meeting_{int(time.time())}"
-                    # Store both user id and name for each attendee
-                    attendees = [{"id": m.id, "name": m.name} for m in voice_channel.members if not m.bot]
-                    start_date = datetime.now()
-                    end_date = None
-                    self.create_meeting_entry(meeting_id, attendees, start_date, end_date)
-                    print(f"New meeting '{meeting_id}' created.")
+                # No active meeting. Check if we have enough participants to start one.
+                if len(non_bot_members) >= self.minimumMeetingParticipants:
+                    # Create a new meeting
+                    try:
+                        meeting_id = f"meeting_{int(time.time())}"
+                        # Store both user id and name for each attendee
+                        attendees = [{"id": m.id, "name": m.name} for m in non_bot_members]
+                        start_date = datetime.now()
+                        end_date = None
+                        self.create_meeting_entry(meeting_id, attendees, start_date, end_date)
+                        print(f"New meeting '{meeting_id}' created.")
 
-                    # Connect to the voice channel
-                    vc = await voice_channel.connect(cls=voice_recv.VoiceRecvClient)
-                    print(f"Bot connected to {voice_channel.name}")
+                        # Connect to the voice channel
+                        vc = await voice_channel.connect(cls=voice_recv.VoiceRecvClient)
+                        print(f"Bot connected to {voice_channel.name}")
 
-                    def callback(user, data: voice_recv.VoiceData):
-                        if user is None:
-                            return
+                        def callback(user, data: voice_recv.VoiceData):
+                            if user is None:
+                                return
 
-                        if user.id not in self.recorders:
-                            self.recorders[user.id] = VoiceRecorder(
-                                user, self.meeting_id, self.whisper_pipeline, self.settings, self.db_handler
-                            )
+                            if user.id not in self.recorders:
+                                self.recorders[user.id] = VoiceRecorder(
+                                    user, self.meeting_id, self.whisper_pipeline, self.settings, self.db_handler
+                                )
 
-                        recorder = self.recorders[user.id]
-                        recorder.add_packet(data.pcm)
+                            recorder = self.recorders[user.id]
+                            recorder.add_packet(data.pcm)
 
-                    vc.listen(voice_recv.BasicSink(callback))
+                        vc.listen(voice_recv.BasicSink(callback))
 
-                except Exception as e:
-                    print(f"Error handling voice channel join: {e}")
-                    traceback.print_exc()
+                    except Exception as e:
+                        print(f"Error handling voice channel join: {e}")
+                        traceback.print_exc()
+                else:
+                    # Not enough participants to start a new meeting; do nothing and don't join
+                    print(f"Not enough participants to start a meeting. Need at least {self.minimumMeetingParticipants}, have {len(non_bot_members)}. Waiting...")
 
         # Check if the bot should disconnect after any voice state update
         if voice_client is not None:
@@ -187,14 +195,13 @@ class NoteBot(commands.Cog):
             if len(non_bot_members) == 0:
                 # No non-bot members left in the voice channel; disconnect the bot
                 try:
-                    # Update meeting's end date before disconnecting
                     end_date = datetime.now()
                     active_meetings = self.db_handler.read_all_entries("meetings")
                     # Sort by newest start_date and update the latest meeting
                     latest_meeting = max(
                         active_meetings, key=lambda m: m["start_date"], default=None
                     )
-                    
+
                     await voice_client.disconnect()
 
                     if latest_meeting:
