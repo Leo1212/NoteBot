@@ -3,11 +3,7 @@ from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
 
 def setup_whisper_model(model_id, device_setting, cache_dir="cache"):
     # Set device and dtype
-    if(device_setting == 'cpu'):
-        device = 'cpu'
-    elif device_setting == 'cuda':
-        device = 'cuda:0'
-    elif device_setting == 'auto':
+    if device_setting == 'auto':
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     else:
         device = device_setting

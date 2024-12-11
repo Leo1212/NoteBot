@@ -68,9 +68,10 @@ class VoiceRecorder:
         # Use Hugging Face pipeline to transcribe
         transcription = self.model_pipeline(
             audio_array,
-            generate_kwargs={"task": "transcribe"},
+            generate_kwargs={"task": "translate"},
             return_timestamps=False,
         )
+        print(transcription)
         return transcription["text"]
 
     def save_audio_file(self, audio_segment):

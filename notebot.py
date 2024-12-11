@@ -9,6 +9,7 @@ import json
 from mongo_handler import MongoDBHandler
 from voice_recorder import VoiceRecorder
 from setup_model import setup_whisper_model
+from meeting_reader import MeetingReader
 
 load_dotenv()
 
@@ -31,6 +32,8 @@ class NoteBot(commands.Cog):
 
         with open("./settings.json", "r") as file:
             self.settings = json.load(file)
+
+        self.meeting_reader = MeetingReader(self.db_handler, self.settings)
 
         if (
             self.settings.get("saveAudio")
@@ -159,7 +162,6 @@ class NoteBot(commands.Cog):
                 try:
                     # Update meeting's end date before disconnecting
                     end_date = datetime.now()
-                    meeting_filter = {"end_date": None}
                     active_meetings = self.db_handler.read_all_entries("meetings")
                     # Sort by newest start_date and update the latest meeting
                     latest_meeting = max(
@@ -172,6 +174,7 @@ class NoteBot(commands.Cog):
                             {"$set": {"end_date": end_date}}
                         )
                         print(f"Updated meeting end date for '{latest_meeting['meeting_id']}'")
+                        self.meeting_reader.read_meeting_transcripts(latest_meeting['meeting_id'])
 
                     await voice_client.disconnect()
                     self.meeting_id = None  
