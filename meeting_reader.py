@@ -50,19 +50,12 @@ class MeetingReader:
         sorted_transcripts = sorted(transcripts, key=lambda t: t["timestamp"])
 
         # Display the transcripts
-        print(f"\nMeeting ID: {meeting_id}")
-        print(f"Start Date: {meeting['start_date']}")
-        print(f"End Date: {meeting.get('end_date', 'Ongoing')}")
-        print("\nTranscripts:\n")
-
         meeting_transcripts = ""
         for transcript in sorted_transcripts:
             user = transcript["user"]
             transcription = transcript["transcription"]
-            print(f"{user}: \"{transcription}\"")
             meeting_transcripts += f"{user}: \"{transcription}\"\n"
 
-        print("\nMeeting Summary:")
         summary_text = "No summary available for this meeting."
 
         # Summarize using the appropriate method
@@ -70,6 +63,8 @@ class MeetingReader:
             # Use OpenAI client
             chat_prompt = (
                 "You are given transcripts from a meeting.\n\n"
+                "Dont make any information up or assume anything. Only summarize the existing transcripts.\n\n"
+                "Generate the response in the language that was spoken in the meeting. So if the transcripts are in german, sumamrize in germand and create a german title. If the languag is englisch, do everything in english and so on. \n\n"
                 "1. Invent a brief, fitting meeting title that captures the overall theme or purpose of the meeting.\n"
                 "2. Summarize the key points, decisions, and action items from the transcripts.\n\n"
                 "The first line of your response should be the newly created meeting title.\n\n"
@@ -92,6 +87,7 @@ class MeetingReader:
             meeting_title = lines[0].strip() if lines else "Untitled Meeting"
 
             meeting_title = meeting_title.replace("Meeting Title: ", "").strip()
+            meeting_title = meeting_title.replace("Title:", "").strip()
             # Update the database with the generated summary and meeting title
             self.db_handler.update_entry(
                 "meetings",
@@ -112,4 +108,4 @@ class MeetingReader:
                 {"$set": {"summary": summary_text}}
             )
 
-        print(summary_text)
+        return summary_text

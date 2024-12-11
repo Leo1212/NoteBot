@@ -41,7 +41,7 @@ class NoteBot(commands.Cog):
         ):
             # Ensure the recordings directory exists
             os.makedirs(self.settings.get("audioPath"), exist_ok=True)
-        
+
         self.whisper_pipeline = setup_whisper_model(self.settings.get("model_id"), self.settings.get("device"))
 
     def create_meeting_entry(self, meeting_id, attendees, start_date, end_date):
@@ -51,7 +51,7 @@ class NoteBot(commands.Cog):
             "attendees": attendees,
             "start_date": start_date,
             "end_date": end_date,
-            "transcriptions": []  
+            "transcriptions": []
         }
         self.db_handler.create_entry("meetings", data)
         self.meeting_id = meeting_id
@@ -76,7 +76,6 @@ class NoteBot(commands.Cog):
                             # Define the callback to handle received voice packets
                             def callback(user, data: voice_recv.VoiceData):
                                 if user is None:
-                                    print("User is None, skipping this packet.")
                                     return
 
                                 if user.id not in self.recorders:
@@ -94,7 +93,6 @@ class NoteBot(commands.Cog):
                             print(f"An unexpected error occurred: {e}")
                             traceback.print_exc()
 
-
     @commands.Cog.listener()
     async def on_voice_state_update(self, member, before, after):
         print(f"Voice state update detected for {member.name}")
@@ -107,33 +105,63 @@ class NoteBot(commands.Cog):
         if before.channel is None and after.channel is not None:
             voice_channel = after.channel
 
-            # If the bot is disconnected, check for an active meeting
-            if voice_client is None:
-                try:
-                    # Find the active meeting with no end date
-                    active_meeting = self.db_handler.read_entry(
-                        "meetings", {"end_date": None}
+            # Check for active meeting
+            active_meeting = self.db_handler.read_entry("meetings", {"end_date": None})
+            if active_meeting:
+                # Meeting already exists and is ongoing
+                self.meeting_id = active_meeting["meeting_id"]
+                print(f"Reconnected to active meeting: {self.meeting_id}")
+
+                # Check if new attendee is already in the meeting's attendee list
+                attendees = active_meeting.get("attendees", [])
+                if not any(a["id"] == member.id for a in attendees) and not member.bot:
+                    # Add the new user to attendees
+                    attendees.append({"id": member.id, "name": member.name})
+                    self.db_handler.update_entry(
+                        "meetings",
+                        {"meeting_id": self.meeting_id},
+                        {"$set": {"attendees": attendees}}
                     )
-                    if active_meeting:
-                        self.meeting_id = active_meeting["meeting_id"]  # Set meeting_id for active meeting
-                        print(f"Reconnected to active meeting: {self.meeting_id}")
-                    else:
-                        # Create a new meeting
-                        meeting_id = f"meeting_{int(time.time())}"
-                        attendees = [m.name for m in voice_channel.members if not m.bot]
-                        start_date = datetime.now()
-                        end_date = None
-                        self.create_meeting_entry(meeting_id, attendees, start_date, end_date)
-                        print(f"New meeting '{meeting_id}' created.")
+                    print(f"Added new attendee {member.name} to meeting {self.meeting_id}")
+
+                # If the bot is disconnected, connect now
+                if voice_client is None:
+                    try:
+                        vc = await voice_channel.connect(cls=voice_recv.VoiceRecvClient)
+                        print(f"Bot connected to {voice_channel.name}")
+
+                        def callback(user, data: voice_recv.VoiceData):
+                            if user is None:
+                                return
+                            if user.id not in self.recorders:
+                                self.recorders[user.id] = VoiceRecorder(
+                                    user, self.meeting_id, self.whisper_pipeline, self.settings, self.db_handler
+                                )
+                            recorder = self.recorders[user.id]
+                            recorder.add_packet(data.pcm)
+
+                        vc.listen(voice_recv.BasicSink(callback))
+
+                    except Exception as e:
+                        print(f"Error handling voice channel join: {e}")
+                        traceback.print_exc()
+            else:
+                # No active meeting, create a new one
+                try:
+                    meeting_id = f"meeting_{int(time.time())}"
+                    # Store both user id and name for each attendee
+                    attendees = [{"id": m.id, "name": m.name} for m in voice_channel.members if not m.bot]
+                    start_date = datetime.now()
+                    end_date = None
+                    self.create_meeting_entry(meeting_id, attendees, start_date, end_date)
+                    print(f"New meeting '{meeting_id}' created.")
 
                     # Connect to the voice channel
                     vc = await voice_channel.connect(cls=voice_recv.VoiceRecvClient)
                     print(f"Bot connected to {voice_channel.name}")
 
-                    # Define the callback to handle received voice packets
                     def callback(user, data: voice_recv.VoiceData):
                         if user is None:
-                            print("User is None, skipping this packet.")
                             return
 
                         if user.id not in self.recorders:
@@ -153,7 +181,6 @@ class NoteBot(commands.Cog):
         # Check if the bot should disconnect after any voice state update
         if voice_client is not None:
             voice_channel = voice_client.channel
-
             # Get a list of non-bot members currently in the voice channel
             non_bot_members = [m for m in voice_channel.members if not m.bot]
 
@@ -167,24 +194,59 @@ class NoteBot(commands.Cog):
                     latest_meeting = max(
                         active_meetings, key=lambda m: m["start_date"], default=None
                     )
+                    
+                    await voice_client.disconnect()
+
                     if latest_meeting:
                         self.db_handler.update_entry(
                             "meetings",
                             {"meeting_id": latest_meeting['meeting_id']},
                             {"$set": {"end_date": end_date}}
                         )
-                        print(f"Updated meeting end date for '{latest_meeting['meeting_id']}'")
+
+                        # Read meeting transcripts and summarize
                         self.meeting_reader.read_meeting_transcripts(latest_meeting['meeting_id'])
 
-                    await voice_client.disconnect()
-                    self.meeting_id = None  
+                        # After summarizing, fetch the updated meeting document with title and summary
+                        updated_meeting = self.db_handler.read_entry(
+                            "meetings", {"meeting_id": latest_meeting['meeting_id']}
+                        )
+
+                        # Prepare the DM message
+                        meeting_title = updated_meeting.get("meeting_title", "Meeting Summary")
+                        meeting_summary = updated_meeting.get("summary", "No summary available.")
+                        start_date_str = updated_meeting["start_date"].strftime("%d.%m.%Y %H:%M")
+                        if updated_meeting["end_date"]:
+                            end_date_str = updated_meeting["end_date"].strftime("%H:%M")
+                        else:
+                            end_date_str = "Ongoing"
+                        attendees = updated_meeting.get("attendees", [])
+                        attendee_names = ", ".join([a["name"] for a in attendees])
+
+                        message_content = (
+                            f"# {meeting_title}\n"
+                            f"**Date:** {start_date_str} - {end_date_str}\n"
+                            f"**Attendees:** {attendee_names}\n"
+                            f"**Summary:**\n{meeting_summary}"
+                        )
+
+                        # Send DMs to attendees
+                        for att in attendees:
+                            member = voice_channel.guild.get_member(att["id"])
+                            if member is not None:
+                                try:
+                                    await member.send(message_content)
+                                    print(f"Sent meeting summary to {member.name}")
+                                except Exception as e:
+                                    print(f"Failed to send DM to {member.name}: {e}")
+
+                    self.meeting_id = None
                     print(
                         f"Bot disconnected from {voice_channel.name} because no users are left."
                     )
                 except Exception as e:
                     print(f"Error disconnecting the bot: {e}")
                     traceback.print_exc()
-
 
 
 @bot.event

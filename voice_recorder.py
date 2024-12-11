@@ -68,10 +68,9 @@ class VoiceRecorder:
         # Use Hugging Face pipeline to transcribe
         transcription = self.model_pipeline(
             audio_array,
-            generate_kwargs={"task": "translate"},
+            generate_kwargs={"task": 'transcribe' if self.settings.get("useOriginalLanguage") == True else "translate"},
             return_timestamps=False,
         )
-        print(transcription)
         return transcription["text"]
 
     def save_audio_file(self, audio_segment):
@@ -79,7 +78,6 @@ class VoiceRecorder:
         filename = f"{self.user.name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp3"
         filepath = os.path.join(audio_path, filename)
         audio_segment.export(filepath, format="mp3")
-        print(f"Saved audio to {filepath}")
         return filepath
 
     def save_transcription_to_db(self, transcription, audio_path):
@@ -99,5 +97,4 @@ class VoiceRecorder:
             {"meeting_id": self.meeting_id},  # Match meeting by ID
             {"$push": {"transcriptions": entry}}  # Use $push to append
         )
-        print(f"Saved transcription to DB for meeting {self.meeting_id}")
 

@@ -43,26 +43,18 @@ class MongoDBHandler:
         """Inserts a new entry into the specified collection."""
         collection = self.db[collection_name]
         result = collection.insert_one(data)
-        print(f"Entry created with ID: {result.inserted_id}")
         return result.inserted_id
 
     def read_entry(self, collection_name, query):
         """Finds and returns an entry based on the provided query."""
         collection = self.db[collection_name]
         result = collection.find_one(query)
-        if result:
-            print(f"Entry found: {result}")
-        else:
-            print("No matching entry found.")
         return result
 
     def update_entry(self, collection_name, query, update_data):
         """Updates an existing entry based on the provided query."""
         # Comment out sanitization to verify raw data:
         # update_data = self.sanitize_data(update_data)  
-        
-        print(f"Update Query: {query}")
-        print(f"Update Data: {update_data}")
         
         collection = self.db[collection_name]
         result = collection.update_one(query, update_data)

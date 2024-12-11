@@ -1,8 +1,9 @@
 {
-    "saveAudio": true,
+    "saveAudio": false,
     "audioPath": "./recordings",
     "minimumMeetingParticipants": 2,
     "model_id": "openai/whisper-large-v3",
-    "summarizer_model_id": "gpt-3.5-turbo",
-    "device": "auto"
+    "summarizer_model_id": "gpt-4o",
+    "device": "auto",
+    "useOriginalLanguage": true
 }
