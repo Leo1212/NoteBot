@@ -1,108 +1,61 @@
 import discord
 import os
-import torch
-import io
 import time
 import traceback
 from dotenv import load_dotenv
 from discord.ext import commands, voice_recv
-from pydub import AudioSegment
-from pydub.silence import detect_nonsilent
 from datetime import datetime
 import json
-import numpy as np
-from transformers import pipeline
-from threading import Timer
+from mongo_handler import MongoDBHandler
+from voice_recorder import VoiceRecorder
+from setup_model import setup_whisper_model
+from meeting_reader import MeetingReader
 
 load_dotenv()
 
 discord.opus._load_default()
 
-bot = commands.Bot(command_prefix=commands.when_mentioned, intents=discord.Intents.all())
-
-class VoiceRecorder:
-    def __init__(self, user, model_pipeline, settings):
-        self.user = user
-        self.buffer = io.BytesIO()
-        self.last_spoken_time = time.time()
-        self.silence_timer = None
-        self.recording = AudioSegment.empty()
-        self.model_pipeline = model_pipeline  # Hugging Face pipeline
-        self.settings = settings  # Load settings from NoteBot
-
-    def add_packet(self, data):
-        # Add the received packet data to the buffer
-        self.buffer.write(data)
-        self.last_spoken_time = time.time()
-
-        # Reset the silence detection timer
-        if self.silence_timer:
-            self.silence_timer.cancel()
-
-        self.silence_timer = Timer(5.0, self.save_recording)
-        self.silence_timer.start()
-
-    def save_recording(self):
-        # Save the audio data to a buffer and transcribe directly
-        if self.buffer.getvalue():
-            self.buffer.seek(0)
-            audio_segment = AudioSegment.from_raw(self.buffer, sample_width=2, frame_rate=48000, channels=2)
-
-            # Detect nonsilent parts to avoid transcribing empty audio
-            nonsilent_ranges = detect_nonsilent(audio_segment, min_silence_len=1000, silence_thresh=-40)
-
-            if nonsilent_ranges:
-                # Transcribe directly from audio data without saving to a file
-                transcription = self.transcribe_recording(audio_segment)
-                print(f"{self.user.name}: {transcription}")
-
-                # Check if settings allow saving audio
-                if self.settings.get('saveAudio'):
-                    self.save_audio_file(audio_segment)
-                
-                return transcription
-
-        # Reset buffer and audio data
-        self.buffer = io.BytesIO()
-        self.recording = AudioSegment.empty()
-
-    def transcribe_recording(self, audio_segment):
-        # Convert the audio segment to a NumPy array
-        samples = np.array(audio_segment.get_array_of_samples())
-        # Convert the samples to float32 for Whisper model
-        audio_array = samples.astype(np.float32) / 32768.0  # normalize to [-1, 1]
-
-        # Use Hugging Face pipeline to transcribe
-        transcription = self.model_pipeline(audio_array, return_timestamps=False)
-        return transcription['text']
-
-    def save_audio_file(self, audio_segment):
-        # Get the path from settings
-        audio_path = self.settings.get('audioPath')
-
-        # Generate a timestamped filename for uniqueness
-        filename = f"{self.user.name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp3"
-        filepath = os.path.join(audio_path, filename)
-
-        # Export the audio to an MP3 file
-        audio_segment.export(filepath, format="mp3")
-        print(f"Saved audio to {filepath}")
+bot = commands.Bot(
+    command_prefix=commands.when_mentioned, intents=discord.Intents.all()
+)
 
 
 class NoteBot(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.meeting_id = None
         self.recorders = {}
-        with open('./settings.json', 'r') as file:
+
+        self.db_handler = MongoDBHandler(
+            os.getenv("MONGO_URI"), os.getenv("MONGO_DB_NAME")
+        )  # Instantiate the MongoDB handler
+
+        with open("./settings.json", "r") as file:
             self.settings = json.load(file)
 
-        if self.settings.get('saveAudio') and self.settings.get('audioPath') is not None:
-            # Ensure the recordings directory exists
-            os.makedirs(self.settings.get('audioPath'), exist_ok=True)
-        
-        device = 0 if torch.cuda.is_available() else -1
-        self.whisper_pipeline = pipeline(model="openai/whisper-large-v3", task="automatic-speech-recognition", device=device)
+        self.meeting_reader = MeetingReader(self.db_handler, self.settings)
 
+        if (
+            self.settings.get("saveAudio")
+            and self.settings.get("audioPath") is not None
+        ):
+            # Ensure the recordings directory exists
+            os.makedirs(self.settings.get("audioPath"), exist_ok=True)
+
+        self.whisper_pipeline = setup_whisper_model(self.settings.get("model_id"), self.settings.get("device"))
+
+    def create_meeting_entry(self, meeting_id, attendees, start_date, end_date):
+        """Creates a meeting entry in the MongoDB database."""
+        data = {
+            "meeting_id": meeting_id,
+            "attendees": attendees,
+            "start_date": start_date,
+            "end_date": end_date,
+            "transcriptions": []
+        }
+        self.db_handler.create_entry("meetings", data)
+        self.meeting_id = meeting_id
+        print(f"Meeting entry created: {meeting_id}")
 
     async def connect_to_existing_calls(self):
         for guild in self.bot.guilds:
@@ -113,17 +66,22 @@ class NoteBot(commands.Cog):
                     if guild.voice_client is None:
                         try:
                             # Connect to the user's voice channel if not already connected
-                            vc = await voice_channel.connect(cls=voice_recv.VoiceRecvClient)
-                            print(f"Bot connected to {voice_channel.name} (user already in channel)")
+                            vc = await voice_channel.connect(
+                                cls=voice_recv.VoiceRecvClient
+                            )
+                            print(
+                                f"Bot connected to {voice_channel.name} (user already in channel)"
+                            )
 
                             # Define the callback to handle received voice packets
                             def callback(user, data: voice_recv.VoiceData):
                                 if user is None:
-                                    print("User is None, skipping this packet.")
                                     return
 
                                 if user.id not in self.recorders:
-                                    self.recorders[user.id] = VoiceRecorder(user, self.whisper_pipeline, self.settings)
+                                    self.recorders[user.id] = VoiceRecorder(
+                                        user, self.meeting_id, self.whisper_pipeline, self.settings, self.db_handler
+                                    )
 
                                 recorder = self.recorders[user.id]
                                 recorder.add_packet(data.pcm)
@@ -135,89 +93,169 @@ class NoteBot(commands.Cog):
                             print(f"An unexpected error occurred: {e}")
                             traceback.print_exc()
 
-    @commands.command()
-    async def test(self, ctx):
-        def callback(user, data: voice_recv.VoiceData):
-            if user.id not in self.recorders:
-                self.recorders[user.id] = VoiceRecorder(user, self.whisper_pipeline)
-            recorder = self.recorders[user.id]
-            recorder.add_packet(data.pcm)
-
-        # Check if the bot is already connected to a voice channel
-        if ctx.voice_client is None:
-            vc = await ctx.author.voice.channel.connect(cls=voice_recv.VoiceRecvClient)
-            vc.listen(voice_recv.BasicSink(callback))
-
-    @commands.command()
-    async def stop(self, ctx):
-        await ctx.voice_client.disconnect()
-
-    @commands.command()
-    async def die(self, ctx):
-        ctx.voice_client.stop()
-        await ctx.bot.close()
-
     @commands.Cog.listener()
     async def on_voice_state_update(self, member, before, after):
         print(f"Voice state update detected for {member.name}")
         if member.bot:
             return
 
+        voice_client = member.guild.voice_client
+
         # Check if the user joined a voice channel
         if before.channel is None and after.channel is not None:
             voice_channel = after.channel
 
-            # Check if the bot is already connected to a voice channel
-            if member.guild.voice_client is None:
+            # Check for active meeting
+            active_meeting = self.db_handler.read_entry("meetings", {"end_date": None})
+            if active_meeting:
+                # Meeting already exists and is ongoing
+                self.meeting_id = active_meeting["meeting_id"]
+                print(f"Reconnected to active meeting: {self.meeting_id}")
+
+                # Check if new attendee is already in the meeting's attendee list
+                attendees = active_meeting.get("attendees", [])
+                if not any(a["id"] == member.id for a in attendees) and not member.bot:
+                    # Add the new user to attendees
+                    attendees.append({"id": member.id, "name": member.name})
+                    self.db_handler.update_entry(
+                        "meetings",
+                        {"meeting_id": self.meeting_id},
+                        {"$set": {"attendees": attendees}}
+                    )
+                    print(f"Added new attendee {member.name} to meeting {self.meeting_id}")
+
+                # If the bot is disconnected, connect now
+                if voice_client is None:
+                    try:
+                        vc = await voice_channel.connect(cls=voice_recv.VoiceRecvClient)
+                        print(f"Bot connected to {voice_channel.name}")
+
+                        def callback(user, data: voice_recv.VoiceData):
+                            if user is None:
+                                return
+                            if user.id not in self.recorders:
+                                self.recorders[user.id] = VoiceRecorder(
+                                    user, self.meeting_id, self.whisper_pipeline, self.settings, self.db_handler
+                                )
+                            recorder = self.recorders[user.id]
+                            recorder.add_packet(data.pcm)
+
+                        vc.listen(voice_recv.BasicSink(callback))
+
+                    except Exception as e:
+                        print(f"Error handling voice channel join: {e}")
+                        traceback.print_exc()
+            else:
+                # No active meeting, create a new one
                 try:
+                    meeting_id = f"meeting_{int(time.time())}"
+                    # Store both user id and name for each attendee
+                    attendees = [{"id": m.id, "name": m.name} for m in voice_channel.members if not m.bot]
+                    start_date = datetime.now()
+                    end_date = None
+                    self.create_meeting_entry(meeting_id, attendees, start_date, end_date)
+                    print(f"New meeting '{meeting_id}' created.")
+
+                    # Connect to the voice channel
                     vc = await voice_channel.connect(cls=voice_recv.VoiceRecvClient)
                     print(f"Bot connected to {voice_channel.name}")
 
-                    # Define the callback to handle received voice packets
                     def callback(user, data: voice_recv.VoiceData):
-                        # Check if user is None
                         if user is None:
-                            print("User is None, skipping this packet.")
                             return
 
                         if user.id not in self.recorders:
-                            self.recorders[user.id] = VoiceRecorder(user, self.whisper_pipeline)
+                            self.recorders[user.id] = VoiceRecorder(
+                                user, self.meeting_id, self.whisper_pipeline, self.settings, self.db_handler
+                            )
 
                         recorder = self.recorders[user.id]
                         recorder.add_packet(data.pcm)
 
-
                     vc.listen(voice_recv.BasicSink(callback))
 
-                except discord.ClientException as e:
-                    print(f"Error connecting to the voice channel: {e}")
                 except Exception as e:
-                    print(f"An unexpected error occurred: {e}")
+                    print(f"Error handling voice channel join: {e}")
                     traceback.print_exc()
 
         # Check if the bot should disconnect after any voice state update
-        voice_client = member.guild.voice_client
         if voice_client is not None:
             voice_channel = voice_client.channel
-
             # Get a list of non-bot members currently in the voice channel
             non_bot_members = [m for m in voice_channel.members if not m.bot]
 
             if len(non_bot_members) == 0:
                 # No non-bot members left in the voice channel; disconnect the bot
                 try:
+                    # Update meeting's end date before disconnecting
+                    end_date = datetime.now()
+                    active_meetings = self.db_handler.read_all_entries("meetings")
+                    # Sort by newest start_date and update the latest meeting
+                    latest_meeting = max(
+                        active_meetings, key=lambda m: m["start_date"], default=None
+                    )
+                    
                     await voice_client.disconnect()
-                    print(f"Bot disconnected from {voice_channel.name} because no users are left.")
+
+                    if latest_meeting:
+                        self.db_handler.update_entry(
+                            "meetings",
+                            {"meeting_id": latest_meeting['meeting_id']},
+                            {"$set": {"end_date": end_date}}
+                        )
+
+                        # Read meeting transcripts and summarize
+                        self.meeting_reader.read_meeting_transcripts(latest_meeting['meeting_id'])
+
+                        # After summarizing, fetch the updated meeting document with title and summary
+                        updated_meeting = self.db_handler.read_entry(
+                            "meetings", {"meeting_id": latest_meeting['meeting_id']}
+                        )
+
+                        # Prepare the DM message
+                        meeting_title = updated_meeting.get("meeting_title", "Meeting Summary")
+                        meeting_summary = updated_meeting.get("summary", "No summary available.")
+                        start_date_str = updated_meeting["start_date"].strftime("%d.%m.%Y %H:%M")
+                        if updated_meeting["end_date"]:
+                            end_date_str = updated_meeting["end_date"].strftime("%H:%M")
+                        else:
+                            end_date_str = "Ongoing"
+                        attendees = updated_meeting.get("attendees", [])
+                        attendee_names = ", ".join([a["name"] for a in attendees])
+
+                        message_content = (
+                            f"# {meeting_title}\n"
+                            f"**Date:** {start_date_str} - {end_date_str}\n"
+                            f"**Attendees:** {attendee_names}\n"
+                            f"**Summary:**\n{meeting_summary}"
+                        )
+
+                        # Send DMs to attendees
+                        for att in attendees:
+                            member = voice_channel.guild.get_member(att["id"])
+                            if member is not None:
+                                try:
+                                    await member.send(message_content)
+                                    print(f"Sent meeting summary to {member.name}")
+                                except Exception as e:
+                                    print(f"Failed to send DM to {member.name}: {e}")
+
+                    self.meeting_id = None
+                    print(
+                        f"Bot disconnected from {voice_channel.name} because no users are left."
+                    )
                 except Exception as e:
                     print(f"Error disconnecting the bot: {e}")
                     traceback.print_exc()
 
+
 @bot.event
 async def on_ready():
-    print('Logged in as {0.id}/{0}'.format(bot.user))
-    print('------')
+    print("Logged in as {0.id}/{0}".format(bot.user))
+    print("------")
     note_bot = NoteBot(bot)
     await bot.add_cog(note_bot)
     await note_bot.connect_to_existing_calls()
 
-bot.run(os.getenv('DISCORD_BOT_TOKEN'))
+
+bot.run(os.getenv("DISCORD_BOT_TOKEN"))

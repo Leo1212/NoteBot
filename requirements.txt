@@ -4,3 +4,8 @@ pydub==0.25.1
 python-dotenv==1.0.1
 transformers==4.44.2
 datasets==3.0.0
+pymongo==4.10.1
+dnspython==2.7.0
+torch==2.3.1
+accelerate==1.1.1
+openai==1.57.2
