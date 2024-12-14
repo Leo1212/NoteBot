@@ -37,8 +37,7 @@ def setup_whisper_model(model_id, device_setting, cache_dir="cache"):
             "pad_token_id": processor.tokenizer.pad_token_id,
         },
         generate_kwargs={
-            "task": "transcribe",
-            # "language": "en",
+            "task": "transcribe"
         }
     )
     return pipe

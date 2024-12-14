@@ -10,7 +10,6 @@ class MongoDBHandler:
         # Connect to MongoDB
         self.client = MongoClient(self.mongo_uri)
         self.db = self.client[self.database_name]
-        # client = MongoClient(DB_MACHINE, DB_PORT)
         
         self.ping = self.client.admin.command("ping")
         if self.ping.get("ok") == 1.0:

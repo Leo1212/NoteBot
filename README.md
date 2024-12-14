@@ -17,6 +17,7 @@ Whether you're working with English, Swiss German, or other supported languages,
 6. run `python3 ./notebot.py`
 
 ## Create mongo DB
+Install [Docker]([https://www.docker.com/) on your computer.
 1. run `docker pull mongodb/mongodb-community-server:latest`
 2. run `docker run --name notebot-mongodb -d -p 27017:27017 -e MONGO_INITDB_ROOT_USERNAME=mongoadmin -e MONGO_INITDB_ROOT_PASSWORD=supersecretdbpassword mongodb/mongodb-community-server:latest`
 

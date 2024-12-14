@@ -94,7 +94,7 @@ class VoiceRecorder:
         # Append the transcription to the 'transcriptions' array
         self.db_handler.update_entry(
             "meetings",
-            {"meeting_id": self.meeting_id},  # Match meeting by ID
-            {"$push": {"transcriptions": entry}}  # Use $push to append
+            {"meeting_id": self.meeting_id},
+            {"$push": {"transcriptions": entry}} 
         )
 
